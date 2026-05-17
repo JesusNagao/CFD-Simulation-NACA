@@ -2,6 +2,28 @@ module Solver
 
 export solver
 
+"""
+Solver module for a simple 2D incompressible Navier-Stokes flow solver.
+"""
+
+"""
+    solver(u, v, NX, NY, inds, dt, dx, dy, rho, p, nu, U_inlet=1.0)
+
+Advance the velocity and pressure fields one timestep using a fractional-step projection.
+
+Arguments:
+- `u`, `v`: velocity components on a collocated grid.
+- `NX`, `NY`: number of interior grid points in x and y.
+- `inds`: obstacle locations as `CartesianIndex` values.
+- `dt`: timestep size.
+- `dx`, `dy`: mesh spacing in x and y.
+- `rho`: fluid density.
+- `p`: pressure field.
+- `nu`: kinematic viscosity.
+- `U_inlet`: fixed horizontal velocity at the left boundary.
+
+Returns updated `(u, v, p)`.
+"""
 function solver(u::Matrix{Float64}, v::Matrix{Float64}, NX::Int, NY::Int, inds::Vector{CartesianIndex{2}}, dt::Float64, dx::Float64, dy::Float64, rho::Float64, p::Matrix{Float64}, nu::Float64, U_inlet::Float64=1.0)
 
     # Fractional step method for incompressible Navier-Stokes

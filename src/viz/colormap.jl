@@ -6,9 +6,9 @@ export compute_vorticity, compute_speed, compute_streamlines, compute_velocity_v
 """
     compute_vorticity(u, v, dx, dy) → Matrix{Float32}
 
-Calcula ω = ∂v/∂x − ∂u/∂y con diferencias centradas.
-`u` es (nx+1)×ny, `v` es nx×(ny+1)  (staggered grid).
-Devuelve ω en los centros de celda: nx×ny.
+Compute ω = ∂v/∂x - ∂u/∂y using centered differences.
+`u` is (nx+1)×ny and `v` is nx×(ny+1) for a staggered grid.
+Returns ω at cell centers as an nx×ny matrix.
 """
 function compute_vorticity(u::Matrix{Float64}, v::Matrix{Float64}, dx::Float64, dy::Float64)
     nx = size(u, 1) - 1
@@ -27,8 +27,8 @@ end
 """
     compute_speed(u, v, dx, dy) → Matrix{Float32}
 
-Calcula la magnitud de la velocidad |u| = sqrt(u^2 + v^2) en el centro de cada celda.
-Devuelve una matriz nx×ny con valores de velocidad positiva.
+Compute speed magnitude |u| = sqrt(u^2 + v^2) at each cell center.
+Returns an nx×ny matrix with positive velocity magnitudes.
 """
 function compute_speed(u::Matrix{Float64}, v::Matrix{Float64}, dx::Float64, dy::Float64)
     nx = size(u, 1) - 1
@@ -195,7 +195,7 @@ end
     smooth_field(field, iterations=1) → Matrix{Float32}
 
 Apply a simple smoothing filter to a scalar field to reduce noise for visualization.
-Funciona para magnitud de velocidad, vorticidad u otros campos escalares.
+Works for speed magnitude, vorticity, or other scalar fields.
 """
 function smooth_field(field::Matrix{Float32}, iterations::Int=1)
     smoothed = copy(field)

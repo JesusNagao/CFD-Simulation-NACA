@@ -8,7 +8,7 @@ const SPEED_MIN = 0.5f0
 const SPEED_MAX = 1.10f0
 
 # ─── Shaders ──────────────────────────────────────────────────────────────────
-# Un quad que cubre toda la pantalla. La vorticidad llega como textura 2D.
+# A fullscreen quad is rendered. The scalar field arrives as a 2D texture.
 
 const VERT_SRC = """
 #version 330 core
@@ -29,7 +29,7 @@ out vec4 FragColor;
 
 uniform sampler2D u_field;
 uniform float     u_vmin;
-uniform float     u_vmax;        // valor máximo para normalizar
+uniform float     u_vmax;        // maximum value for normalization
 
 vec3 speed_colormap(float t) {
     vec3 dark_blue = vec3(0.05, 0.1, 0.35);
@@ -145,7 +145,7 @@ void main() {
 }
 """
 
-# ─── Helpers de compilación ───────────────────────────────────────────────────
+# ─── Compilation helpers ───────────────────────────────────────────────────
 
 function compile_shader(src::String, type::GLenum)
     shader = glCreateShader(type)
@@ -247,8 +247,8 @@ mutable struct FluidEngine
     vao_vectors::GLuint       # VAO for velocity vectors
     vbo_vectors::GLuint       # VBO for velocity vectors
     texture::GLuint
-    loc_vmin::GLint          # ubicación del uniform u_vmin
-    loc_vmax::GLint          # ubicación del uniform u_vmax
+    loc_vmin::GLint          # location of the uniform u_vmin
+    loc_vmax::GLint          # location of the uniform u_vmax
     loc_streamline_color::GLint  # color for streamlines and vectors
     speed_min::Float32        # lower bound for color normalization
     speed_max::Float32        # upper bound for color normalization
@@ -273,7 +273,7 @@ mutable struct FluidEngine
     text_vertex_count::Int            # Vertex count for text rendering
 end
 
-# ─── Inicialización ───────────────────────────────────────────────────────────
+# ─── Initialization ─────────────────────────────────────────────────────────
 
 function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
               speed_min::Float32=SPEED_MIN, speed_max::Float32=SPEED_MAX)
@@ -281,13 +281,13 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
     GLFW.WindowHint(GLFW.CONTEXT_VERSION_MAJOR, 3)
     GLFW.WindowHint(GLFW.CONTEXT_VERSION_MINOR, 3)
     GLFW.WindowHint(GLFW.OPENGL_PROFILE, GLFW.OPENGL_CORE_PROFILE)
-    GLFW.WindowHint(GLFW.OPENGL_FORWARD_COMPAT, true)  # requerido en macOS
+    GLFW.WindowHint(GLFW.OPENGL_FORWARD_COMPAT, true)  # required on macOS
 
     window = GLFW.CreateWindow(width, height, title)
     GLFW.MakeContextCurrent(window)
     GLFW.SwapInterval(1)  # vsync
 
-    # Quad de pantalla completa: dos triángulos, coords NDC + UV
+    # Fullscreen quad: two triangles, NDC coordinates + UV coordinates
     #
     #  (-1,1)──────(1,1)
     #    │    ╲  B  │
@@ -321,7 +321,7 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
       glEnableVertexAttribArray(1)
     glBindVertexArray(0)
 
-    # Textura 2D de canal único (R32F) para un campo escalar como velocidad
+    # 2D single-channel texture (R32F) for a scalar field such as speed
     tex_ref = Ref{GLuint}(0)
     glGenTextures(1, tex_ref)
     glBindTexture(GL_TEXTURE_2D, tex_ref[])
@@ -329,7 +329,7 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-      # Reservar espacio: nx×ny píxeles, 1 canal float
+      # Reserve storage: nx×ny pixels, one float channel
       glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, nx, ny, 0,
                    GL_RED, GL_FLOAT, C_NULL)
     glBindTexture(GL_TEXTURE_2D, 0)
@@ -478,16 +478,16 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
                        prog_text, vao_text_ref[], vbo_text_ref[], text_texture_ref[], 0)
 end
 
-# ─── Actualizar textura con datos nuevos del solver ───────────────────────────
+# ─── Upload texture with new solver data ───────────────────────────────────
 
 """
     upload_scalar_field!(engine, field)
 
-Sube la matriz escalar `field` (nx × ny, Float32) a la GPU.
-Llama esto cada vez que el solver produce un nuevo timestep.
+Upload the scalar matrix `field` (nx × ny, Float32) to the GPU.
+Call this each time the solver produces a new timestep.
 """
 function upload_scalar_field!(eng::FluidEngine, field::Matrix{Float32})
-    @assert size(field) == (eng.nx, eng.ny) "field debe ser $(eng.nx)×$(eng.ny)"
+    @assert size(field) == (eng.nx, eng.ny) "field must be $(eng.nx)×$(eng.ny)"
 
     glBindTexture(GL_TEXTURE_2D, eng.texture)
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, eng.nx, eng.ny,
@@ -497,7 +497,7 @@ end
 
 upload_vorticity!(eng::FluidEngine, omega::Matrix{Float32}) = upload_scalar_field!(eng, omega)
 
-# ─── Render de un frame ───────────────────────────────────────────────────────
+# ─── Render a frame ─────────────────────────────────────────────────────────
 
 """
     upload_streamlines!(engine, streamlines, dx, dy)
@@ -577,11 +577,12 @@ function update_text_buffer!(eng::FluidEngine, text_vertices::Vector{Float32})
 end
 
 """
-    render_frame!(engine, vmax, show_streamlines=false) → Bool
+    render_frame!(engine, vmin, vmax, show_streamlines=false, capture_path=nothing) → Bool
 
-Dibuja un frame. Devuelve `false` si el usuario cerró la ventana (ESC o ×).
-`vmax` es el valor máximo del campo escalar para normalizar el colormap.
-`show_streamlines` habilita la visualización de streamlines.
+Draw one frame and return `false` if the user closed the window (ESC or close button).
+`vmin` and `vmax` normalize the scalar field colormap.
+`show_streamlines` enables streamline rendering.
+`capture_path` optionally saves the frame to an image file.
 """
 function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_streamlines::Bool=false, capture_path::Union{Nothing,String}=nothing)::Bool
     GLFW.PollEvents()
@@ -700,7 +701,7 @@ function capture_frame!(eng::FluidEngine, filename::AbstractString)
     end
 end
 
-# ─── Limpieza ─────────────────────────────────────────────────────────────────
+# ─── Cleanup ─────────────────────────────────────────────────────────────────
 
 function shutdown!(eng::FluidEngine)
     tex = Ref(eng.texture); glDeleteTextures(1, tex)

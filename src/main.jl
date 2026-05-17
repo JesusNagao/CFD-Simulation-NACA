@@ -1,5 +1,5 @@
 # examples/cavity_live.jl
-# Ejecutar desde la raíz del proyecto:  julia --project examples/cavity_live.jl
+# Run from the project root: julia --project examples/cavity_live.jl
 
 include("../src/viz/engine.jl")
 include("../src/viz/colormap.jl")
@@ -14,7 +14,7 @@ using .NACA
 using .Solver
 using Printf
 
-# ── Parámetros de simulación ──────────────────────────────────────────────────
+# ── Simulation parameters ────────────────────────────────────────────────────
 const NX, NY  = 256, 256  # Reduced for stability
 const RE       = 100.0
 const U_INF    = 1.0
@@ -23,23 +23,8 @@ const DY       = 100.0 / (NY - 1)
 const NU       = U_INF * 100.0 / RE  # kinematic viscosity from Reynolds number
 const DT       = 0.01 * min(DX, DY) / U_INF  # Very conservative timestep
 
-# ── Aquí irá tu solver real. Por ahora: datos de prueba animados ──────────────
-# Reemplaza esta función con una llamada a tu módulo src/solver/
-#=function fake_solver_step!(u, v, t, inds)
-    for j in 1:NY+1, i in 1:NX+1
-        if CartesianIndex(i, j) in inds
-            u[i, j] = 0.0
-            v[i, j] = 0.0
-            continue
-        end
-        x = (i-1) * DX;  y = (j-1) * DY
-        u[i, j] = sin(2π*x) * cos(2π*y) * cos(t)
-        v[i, j] = -cos(2π*x) * sin(2π*y) * cos(t)
-    end
-end
-=#
 
-# ── Inicializar campos ────────────────────────────────────────────────────────
+# ── Initialize fields ───────────────────────────────────────────────────────
 global u = fill(U_INF, NX+1, NY+1)
 global v = zeros(NX+1, NY+1)
 global p = zeros(NX+1, NY+1)
@@ -70,7 +55,7 @@ for i in length(profile_x)-1:-1:2
     push!(profile_vertices, Float32(profile_x[i]), Float32(profile_y_lower[i]))
 end
 
-# ── Inicializar engine ────────────────────────────────────────────────────────
+# ── Initialize engine ───────────────────────────────────────────────────────
 record_frames = false  # set to true to save every rendered frame to frames/frame_XXXXX.ppm
 record_dir = "frames"
 if record_frames
@@ -89,22 +74,21 @@ global t = 0.0
 
 while running
 
-    # 1. Avanzar solver un paso de tiempo
-    #fake_solver_step!(u, v, t, inds)
+    # 1. Advance the solver by one time step
     global u, v, p = Solver.solver(u, v, NX, NY, inds, DT, DX, DY, 1.0, p, NU, U_INF)
     global t = t + DT
     println("Time step: t = ", t)
 
-    # 2. Calcular magnitud de velocidad desde los campos u, v
+    # 2. Calculate speed magnitude from the u, v fields
     speed = Colormap.compute_speed(u, v, DX, DY)
 
-    # 2.5. Suavizar campo de velocidad para visualización más fluida
+    # 2.5. Smooth the speed field for a smoother visualization
     speed = Colormap.smooth_field(speed, 2)
 
-    # 3. Subir magnitud de velocidad a la textura en GPU
+    # 3. Upload speed magnitude to the GPU texture
     VizEngine.upload_scalar_field!(eng, speed)
 
-    # 6. Normalizar con el máximo actual para el colormap de velocidad
+    # 6. Normalize using the current range for the speed colormap
     vmin = minimum(speed)
     vmax = maximum(speed)
     println("Time step: t = ", t, ", speed range = [", vmin, ", ", vmax, "]")
@@ -115,7 +99,7 @@ while running
         break
     end
 
-    # 7. Dibujar frame — si devuelve false el usuario cerró la ventana
+    # 7. Render the frame — returns false if the user closed the window
     frame_path = record_frames ? joinpath(record_dir, @sprintf("frame_%05d.ppm", frame_index)) : nothing
     global running = VizEngine.render_frame!(eng, Float32(vmin), Float32(vmax), false, frame_path)
     if record_frames

@@ -2,10 +2,17 @@ module Grid
 
 export generate_grid
 
+"""
+    generate_grid(x, y)
+
+Create a full 2D coordinate grid from separate x and y ranges.
+The returned matrices satisfy
+`grid_space_x[i,j] == x[i]` and `grid_space_y[i,j] == y[j]`.
+"""
 
 function generate_grid(x::LinRange, y::LinRange)
     
-    #Determine sizes for our x and y axis
+    # Determine sizes for the x and y axes
     size_x = length(x)
     size_y = length(y)
 
