@@ -71,7 +71,7 @@ for i in length(profile_x)-1:-1:2
 end
 
 # ── Inicializar engine ────────────────────────────────────────────────────────
-record_frames = true  # set to true to save every rendered frame to frames/frame_XXXXX.ppm
+record_frames = false  # set to true to save every rendered frame to frames/frame_XXXXX.ppm
 record_dir = "frames"
 if record_frames
     mkpath(record_dir)
