@@ -4,6 +4,9 @@ module VizEngine
 using GLFW
 using ModernGL
 
+const SPEED_MIN = 0.5f0
+const SPEED_MAX = 1.10f0
+
 # ─── Shaders ──────────────────────────────────────────────────────────────────
 # Un quad que cubre toda la pantalla. La vorticidad llega como textura 2D.
 
@@ -25,6 +28,7 @@ in vec2 TexCoord;
 out vec4 FragColor;
 
 uniform sampler2D u_field;
+uniform float     u_vmin;
 uniform float     u_vmax;        // valor máximo para normalizar
 
 vec3 speed_colormap(float t) {
@@ -40,7 +44,8 @@ vec3 speed_colormap(float t) {
 
 void main() {
     float raw = texture(u_field, TexCoord).r;
-    float t   = clamp(raw / u_vmax, 0.0, 1.0);
+    float t   = clamp((raw - u_vmin) / (u_vmax - u_vmin), 0.0, 1.0);
+    t = pow(t, 0.5);   // increase contrast for small variations in speed
 
     vec3 color = speed_colormap(t);
     if (raw < 1e-6) {
@@ -242,8 +247,11 @@ mutable struct FluidEngine
     vao_vectors::GLuint       # VAO for velocity vectors
     vbo_vectors::GLuint       # VBO for velocity vectors
     texture::GLuint
+    loc_vmin::GLint          # ubicación del uniform u_vmin
     loc_vmax::GLint          # ubicación del uniform u_vmax
     loc_streamline_color::GLint  # color for streamlines and vectors
+    speed_min::Float32        # lower bound for color normalization
+    speed_max::Float32        # upper bound for color normalization
     nx::Int
     ny::Int
     streamlines_data::Vector{Float32}  # Store streamline vertices
@@ -267,7 +275,8 @@ end
 
 # ─── Inicialización ───────────────────────────────────────────────────────────
 
-function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900)
+function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
+              speed_min::Float32=SPEED_MIN, speed_max::Float32=SPEED_MAX)
     GLFW.Init()
     GLFW.WindowHint(GLFW.CONTEXT_VERSION_MAJOR, 3)
     GLFW.WindowHint(GLFW.CONTEXT_VERSION_MINOR, 3)
@@ -328,6 +337,7 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900)
     prog = create_program(VERT_SRC, FRAG_SRC)
     glUseProgram(prog)
     glUniform1i(glGetUniformLocation(prog, "u_field"), 0)  # texture unit 0
+    loc_vmin = glGetUniformLocation(prog, "u_vmin")
     loc_vmax = glGetUniformLocation(prog, "u_vmax")
 
     # Initialize streamlines shader program
@@ -458,7 +468,8 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900)
     return FluidEngine(window, prog, prog_streamlines,
                        vao_ref[], vao_streamlines_ref[], vbo_streamlines_ref[],
                        vao_vectors_ref[], vbo_vectors_ref[], tex_ref[],
-                       loc_vmax, loc_streamline_color,
+                       loc_vmin, loc_vmax, loc_streamline_color,
+                       speed_min, speed_max,
                        nx, ny,
                        Float32[], Float32[],
                        vao_profile_ref[], vbo_profile_ref[], Float32[],
@@ -585,7 +596,8 @@ function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_stre
 
     # Render scalar field background (speed magnitude)
     glUseProgram(eng.prog)
-    glUniform1f(eng.loc_vmax, max(vmax, 1f-6))  # evitar división por cero
+    glUniform1f(eng.loc_vmin, eng.speed_min)
+    glUniform1f(eng.loc_vmax, eng.speed_max)
 
     glActiveTexture(GL_TEXTURE0)
     glBindTexture(GL_TEXTURE_2D, eng.texture)
@@ -629,11 +641,11 @@ function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_stre
     glBindVertexArray(0)
 
     # Draw numeric labels below the legend bar
-    if vmax > vmin
-        min_label = string(round(vmin, digits=2))
-        mid_val = (vmin + vmax) / 2f0
+    if eng.speed_max > eng.speed_min
+        min_label = string(round(eng.speed_min, digits=2))
+        mid_val = (eng.speed_min + eng.speed_max) / 2f0
         mid_label = string(round(mid_val, digits=2))
-        max_label = string(round(vmax, digits=2))
+        max_label = string(round(eng.speed_max, digits=2))
         label_scale = 0.0035f0
 
         min_x = -0.75f0

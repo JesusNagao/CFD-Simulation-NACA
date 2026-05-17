@@ -76,9 +76,12 @@ record_dir = "frames"
 if record_frames
     mkpath(record_dir)
 end
+speed_min = 0.6f0
+speed_max = 1.10f0
 global frame_index = 0
 
-eng = VizEngine.init(NX, NY; title="Fluid Flow — Speed Magnitude", width=700, height=700)
+eng = VizEngine.init(NX, NY; title="Fluid Flow — Speed Magnitude", width=700, height=700,
+                     speed_min=speed_min, speed_max=speed_max)
 VizEngine.upload_profile!(eng, profile_vertices, DX, DY)
 
 running = true
