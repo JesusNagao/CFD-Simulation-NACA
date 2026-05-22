@@ -30,6 +30,7 @@ out vec4 FragColor;
 uniform sampler2D u_field;
 uniform float     u_vmin;
 uniform float     u_vmax;        // maximum value for normalization
+uniform int       u_view_mode;
 
 vec3 speed_colormap(float t) {
     vec3 dark_blue = vec3(0.05, 0.1, 0.35);
@@ -42,13 +43,40 @@ vec3 speed_colormap(float t) {
     else return mix(yellow, red, (t - 0.66) / 0.34);
 }
 
+vec3 pressure_colormap(float t) {
+    vec3 blue  = vec3(0.05, 0.25, 0.7);
+    vec3 white = vec3(0.95, 0.95, 0.95);
+    vec3 red   = vec3(0.8, 0.15, 0.15);
+    if (t < 0.5) return mix(blue, white, t * 2.0);
+    return mix(white, red, (t - 0.5) * 2.0);
+}
+
+vec3 vorticity_colormap(float t) {
+    vec3 purple = vec3(0.5, 0.1, 0.65);
+    vec3 cyan   = vec3(0.15, 0.9, 0.9);
+    vec3 yellow = vec3(0.98, 0.9, 0.3);
+    if (t < 0.5) return mix(purple, cyan, t * 2.0);
+    return mix(cyan, yellow, (t - 0.5) * 2.0);
+}
+
 void main() {
     float raw = texture(u_field, TexCoord).r;
-    float t   = clamp((raw - u_vmin) / (u_vmax - u_vmin), 0.0, 1.0);
-    t = pow(t, 0.5);   // increase contrast for small variations in speed
+    float t = 0.0;
+    if (u_vmax > u_vmin) {
+        t = clamp((raw - u_vmin) / (u_vmax - u_vmin), 0.0, 1.0);
+    }
 
-    vec3 color = speed_colormap(t);
-    if (raw < 1e-6) {
+    vec3 color;
+    if (u_view_mode == 1) {
+        t = pow(t, 0.5);
+        color = speed_colormap(t);
+    } else if (u_view_mode == 2) {
+        color = pressure_colormap(t);
+    } else {
+        color = vorticity_colormap(t);
+    }
+
+    if (u_view_mode == 1 && raw < 1e-6) {
         color = vec3(0.05, 0.1, 0.15);
     }
 
@@ -102,7 +130,7 @@ void main() {
 const TEXT_FONT_WIDTH = 5
 const TEXT_FONT_HEIGHT = 7
 const TEXT_FONT_GAP = 1
-const TEXT_ATLAS_CHARS = "0123456789.-ms/ "
+const TEXT_ATLAS_CHARS = "0123456789.-ms/ SPEEDRUVOTICY "
 
 const TEXT_FONT_BITMAPS = Dict(
     '0' => [" 111 ", "1   1", "1  11", "1 1 1", "11  1", "1   1", " 111 "],
@@ -120,6 +148,18 @@ const TEXT_FONT_BITMAPS = Dict(
     'm' => ["     ", "     ", "     ", "1   1", "11 11", "1 1 1", "1   1"],
     's' => [" 111 ", "1   1", "1    ", " 111 ", "    1", "1   1", " 111 "],
     '/' => ["    1", "   1 ", "   1 ", "  1  ", " 1   ", " 1   ", "1    "],
+    'S' => [" 111 ", "1    ", "1    ", " 111 ", "    1", "1   1", " 111 "],
+    'P' => ["1111 ", "1   1", "1   1", "1111 ", "1    ", "1    ", "1    "],
+    'R' => ["1111 ", "1   1", "1   1", "1111 ", "1  1 ", "1   1", "1   1"],
+    'E' => ["11111", "1    ", "1    ", "1111 ", "1    ", "1    ", "11111"],
+    'D' => ["1111 ", "1   1", "1   1", "1   1", "1   1", "1   1", "1111 "],
+    'U' => ["1   1", "1   1", "1   1", "1   1", "1   1", "1   1", " 111 "],
+    'V' => ["1   1", "1   1", "1   1", "1   1", " 1 1 ", " 1 1 ", "  1  "],
+    'O' => [" 111 ", "1   1", "1   1", "1   1", "1   1", "1   1", " 111 "],
+    'T' => ["11111", "  1  ", "  1  ", "  1  ", "  1  ", "  1  ", "  1  "],
+    'I' => ["11111", "  1  ", "  1  ", "  1  ", "  1  ", "  1  ", "11111"],
+    'C' => [" 1111", "1    ", "1    ", "1    ", "1    ", "1    ", " 1111"],
+    'Y' => ["1   1", "1   1", " 1 1 ", "  1  ", "  1  ", "  1  ", "  1  "],
     ' ' => ["     ", "     ", "     ", "     ", "     ", "     ", "     "]
 )
 
@@ -249,6 +289,7 @@ mutable struct FluidEngine
     texture::GLuint
     loc_vmin::GLint          # location of the uniform u_vmin
     loc_vmax::GLint          # location of the uniform u_vmax
+    loc_view_mode::GLint     # location of the uniform u_view_mode
     loc_streamline_color::GLint  # color for streamlines and vectors
     speed_min::Float32        # lower bound for color normalization
     speed_max::Float32        # upper bound for color normalization
@@ -262,6 +303,8 @@ mutable struct FluidEngine
     prog_legend::GLuint               # Shader program for the legend
     vao_legend::GLuint                # VAO for the legend bar
     vbo_legend::GLuint                # VBO for the legend bar
+    vao_buttons::GLuint               # VAO for HUD buttons
+    vbo_buttons::GLuint               # VBO for HUD buttons
     vao_legend_outline::GLuint        # VAO for legend outline
     vbo_legend_outline::GLuint        # VBO for legend outline
     legend_count::Int                 # Vertex count for legend rendering
@@ -271,6 +314,7 @@ mutable struct FluidEngine
     vbo_text::GLuint                  # VBO for text quads
     text_texture::GLuint              # Texture atlas for text rendering
     text_vertex_count::Int            # Vertex count for text rendering
+    prev_left_pressed::Bool           # previous mouse left button state
 end
 
 # ─── Initialization ─────────────────────────────────────────────────────────
@@ -285,6 +329,7 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
 
     window = GLFW.CreateWindow(width, height, title)
     GLFW.MakeContextCurrent(window)
+    GLFW.SetInputMode(window, GLFW.STICKY_KEYS, 1)
     GLFW.SwapInterval(1)  # vsync
 
     # Fullscreen quad: two triangles, NDC coordinates + UV coordinates
@@ -339,6 +384,7 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
     glUniform1i(glGetUniformLocation(prog, "u_field"), 0)  # texture unit 0
     loc_vmin = glGetUniformLocation(prog, "u_vmin")
     loc_vmax = glGetUniformLocation(prog, "u_vmax")
+    loc_view_mode = glGetUniformLocation(prog, "u_view_mode")
 
     # Initialize streamlines shader program
     prog_streamlines = create_program(VERT_STREAMLINES_SRC, FRAG_STREAMLINES_SRC)
@@ -407,7 +453,22 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
 
     glBindVertexArray(vao_legend_ref[])
     glBindBuffer(GL_ARRAY_BUFFER, vbo_legend_ref[])
-    glBufferData(GL_ARRAY_BUFFER, sizeof(legend_vertices), legend_vertices, GL_STATIC_DRAW)
+    glBufferData(GL_ARRAY_BUFFER, sizeof(legend_vertices), legend_vertices, GL_DYNAMIC_DRAW)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5*sizeof(Float32), Ptr{Nothing}(0))
+    glEnableVertexAttribArray(0)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5*sizeof(Float32), Ptr{Nothing}(2*sizeof(Float32)))
+    glEnableVertexAttribArray(1)
+    glBindVertexArray(0)
+
+    # Initialize buttons VAO/VBO (empty for now)
+    vao_buttons_ref = Ref{GLuint}(0)
+    vbo_buttons_ref = Ref{GLuint}(0)
+    glGenVertexArrays(1, vao_buttons_ref)
+    glGenBuffers(1, vbo_buttons_ref)
+
+    glBindVertexArray(vao_buttons_ref[])
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_buttons_ref[])
+    glBufferData(GL_ARRAY_BUFFER, 0, C_NULL, GL_DYNAMIC_DRAW)
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5*sizeof(Float32), Ptr{Nothing}(0))
     glEnableVertexAttribArray(0)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5*sizeof(Float32), Ptr{Nothing}(2*sizeof(Float32)))
@@ -468,14 +529,15 @@ function init(nx::Int, ny::Int; title="Fluid Visualizer", width=900, height=900,
     return FluidEngine(window, prog, prog_streamlines,
                        vao_ref[], vao_streamlines_ref[], vbo_streamlines_ref[],
                        vao_vectors_ref[], vbo_vectors_ref[], tex_ref[],
-                       loc_vmin, loc_vmax, loc_streamline_color,
+                       loc_vmin, loc_vmax, loc_view_mode, loc_streamline_color,
                        speed_min, speed_max,
                        nx, ny,
                        Float32[], Float32[],
                        vao_profile_ref[], vbo_profile_ref[], Float32[],
                        prog_legend, vao_legend_ref[], vbo_legend_ref[],
+                       vao_buttons_ref[], vbo_buttons_ref[],
                        vao_legend_outline_ref[], vbo_legend_outline_ref[], 8, 4,
-                       prog_text, vao_text_ref[], vbo_text_ref[], text_texture_ref[], 0)
+                       prog_text, vao_text_ref[], vbo_text_ref[], text_texture_ref[], 0, false)
 end
 
 # ─── Upload texture with new solver data ───────────────────────────────────
@@ -576,6 +638,29 @@ function update_text_buffer!(eng::FluidEngine, text_vertices::Vector{Float32})
     glBindBuffer(GL_ARRAY_BUFFER, 0)
 end
 
+function build_legend_vertices(view_mode::Int)
+    y0 = -0.85f0; y1 = -0.78f0
+    if view_mode == 2  # Pressure: blue → white → red
+        stops = [(-0.75f0, 0.05f0, 0.25f0, 0.7f0),
+                 ( 0.0f0,  0.95f0, 0.95f0, 0.95f0),
+                 ( 0.75f0, 0.8f0,  0.15f0, 0.15f0)]
+    elseif view_mode == 3  # Vorticity: purple → cyan → yellow
+        stops = [(-0.75f0, 0.5f0,  0.1f0,  0.65f0),
+                 ( 0.0f0,  0.15f0, 0.9f0,  0.9f0),
+                 ( 0.75f0, 0.98f0, 0.9f0,  0.3f0)]
+    else  # Speed: dark blue → cyan → yellow → red
+        stops = [(-0.75f0, 0.05f0, 0.1f0,  0.35f0),
+                 (-0.25f0, 0.2f0,  0.7f0,  0.9f0),
+                 ( 0.25f0, 0.98f0, 0.9f0,  0.3f0),
+                 ( 0.75f0, 0.85f0, 0.2f0,  0.1f0)]
+    end
+    verts = Float32[]
+    for (x, r, g, b) in stops
+        append!(verts, [x, y0, r, g, b, x, y1, r, g, b])
+    end
+    return verts
+end
+
 """
     render_frame!(engine, vmin, vmax, show_streamlines=false, capture_path=nothing) → Bool
 
@@ -584,21 +669,59 @@ Draw one frame and return `false` if the user closed the window (ESC or close bu
 `show_streamlines` enables streamline rendering.
 `capture_path` optionally saves the frame to an image file.
 """
-function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_streamlines::Bool=false, capture_path::Union{Nothing,String}=nothing)::Bool
+function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_streamlines::Bool=false, capture_path::Union{Nothing,String}=nothing, view_mode::Int=1, view_name::String="")
     GLFW.PollEvents()
 
     if GLFW.WindowShouldClose(eng.window) ||
        GLFW.GetKey(eng.window, GLFW.KEY_ESCAPE) == GLFW.PRESS
-        return false
+        return (false, 0)
     end
+
+    clicked = 0
+
+    # Handle mouse clicks for HUD buttons
+    left_pressed = GLFW.GetMouseButton(eng.window, GLFW.MOUSE_BUTTON_LEFT)
+    #println("Left pressed: ", left_pressed, " (previous: ", eng.prev_left_pressed, ")")
+    if left_pressed && !eng.prev_left_pressed
+        # New click: obtain cursor position and map to NDC
+        cpos  = GLFW.GetCursorPos(eng.window)
+        wsize = GLFW.GetWindowSize(eng.window)
+        w = Float64(wsize.width); h = Float64(wsize.height)
+        ndc_x = Float32((cpos.x / w) * 2.0 - 1.0)
+        ndc_y = Float32(-((cpos.y / h) * 2.0 - 1.0))
+        println("[Click] cursor NDC: (", round(ndc_x, digits=3), ", ", round(ndc_y, digits=3), ")")
+
+        # Define button layout (top-left area)
+        btn_w = 0.22f0
+        btn_h = 0.08f0
+        gap = 0.02f0
+        start_x = -0.96f0
+        start_y = 0.92f0
+
+        # Buttons: SPEED(1), PRESSURE(2), VORTICITY(3)
+        btns = [ (start_x,               btn_w, btn_h, 1),
+                 (start_x + (btn_w+gap), btn_w, btn_h, 2),
+                 (start_x + 2*(btn_w+gap), btn_w, btn_h, 3) ]
+
+        for (bx, bw, bh, mode) in btns
+            if ndc_x >= bx && ndc_x <= bx+bw && ndc_y <= start_y && ndc_y >= start_y-bh
+                clicked = mode
+                break
+            end
+        end
+    end
+
+
+    eng.prev_left_pressed = left_pressed
 
     glClearColor(0f0, 0f0, 0f0, 1f0)
     glClear(GL_COLOR_BUFFER_BIT)
 
-    # Render scalar field background (speed magnitude)
+    # Render scalar field background
     glUseProgram(eng.prog)
-    glUniform1f(eng.loc_vmin, eng.speed_min)
-    glUniform1f(eng.loc_vmax, eng.speed_max)
+    glUniform1f(eng.loc_vmin, vmin)
+    glUniform1f(eng.loc_vmax, vmax)
+    glUniform1i(eng.loc_view_mode, view_mode)
 
     glActiveTexture(GL_TEXTURE0)
     glBindTexture(GL_TEXTURE_2D, eng.texture)
@@ -625,6 +748,13 @@ function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_stre
         glBindVertexArray(0)
     end
 
+    # Rebuild and upload the legend gradient to match the current view mode
+    legend_verts = build_legend_vertices(view_mode)
+    glBindBuffer(GL_ARRAY_BUFFER, eng.vbo_legend)
+    glBufferData(GL_ARRAY_BUFFER, sizeof(legend_verts), legend_verts, GL_DYNAMIC_DRAW)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    eng.legend_count = length(legend_verts) ÷ 5
+
     # Render the legend colorbar in the lower part of the screen
     glUseProgram(eng.prog_legend)
     glBindVertexArray(eng.vao_legend)
@@ -642,11 +772,11 @@ function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_stre
     glBindVertexArray(0)
 
     # Draw numeric labels below the legend bar
-    if eng.speed_max > eng.speed_min
-        min_label = string(round(eng.speed_min, digits=2))
-        mid_val = (eng.speed_min + eng.speed_max) / 2f0
+    if vmax > vmin
+        min_label = string(round(vmin, digits=2))
+        mid_val = (vmin + vmax) / 2f0
         mid_label = string(round(mid_val, digits=2))
-        max_label = string(round(eng.speed_max, digits=2))
+        max_label = string(round(vmax, digits=2))
         label_scale = 0.0035f0
 
         min_x = -0.75f0
@@ -659,7 +789,7 @@ function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_stre
         append!(text_data, text_quad_vertices(min_label, min_x, label_y, label_scale))
         append!(text_data, text_quad_vertices(mid_label, mid_x, label_y, label_scale))
         append!(text_data, text_quad_vertices(max_label, max_x, label_y, label_scale))
-        append!(text_data, text_quad_vertices("m/s", -0.75f0, unit_y, label_scale * 0.9f0))
+        append!(text_data, text_quad_vertices(view_name, -0.75f0, unit_y, label_scale * 0.9f0))
 
         update_text_buffer!(eng, text_data)
         glUseProgram(eng.prog_text)
@@ -673,15 +803,109 @@ function render_frame!(eng::FluidEngine, vmin::Float32, vmax::Float32, show_stre
         glBindVertexArray(0)
     end
 
+    # ── HUD buttons: gradient fill + border outline + centred label ──────────
+    let
+        btn_w  = 0.22f0
+        btn_h  = 0.08f0
+        gap    = 0.02f0
+        sx     = -0.96f0
+        sy     =  0.92f0
+        lsc    = 0.0038f0                          # label text scale
+        lh     = lsc * Float32(TEXT_FONT_HEIGHT)   # label height in NDC
 
-    GLFW.SetWindowTitle(eng.window, string("Fluid Flow — Speed [", round(vmin, digits=3), " → ", round(vmax, digits=3), "]"))
+        # (mode, label, x-origin, base fill colour r/g/b)
+        defs = [
+            (1, "SPEED",     sx,                   (0.04f0, 0.10f0, 0.50f0)),
+            (2, "PRESSURE",  sx + (btn_w + gap),   (0.05f0, 0.32f0, 0.12f0)),
+            (3, "VORTICITY", sx + 2*(btn_w + gap), (0.38f0, 0.05f0, 0.42f0)),
+        ]
+
+        lbl_verts = Float32[]   # accumulate all label quads for one text draw
+
+        for (mode, label, bx, (br, bg, bb)) in defs
+            x0 = bx; x1 = bx + btn_w
+            y0 = sy - btn_h; y1 = sy
+            act = (mode == view_mode)
+
+            # ── gradient fill (bottom darker → top lighter) ───────────────
+            if act
+                top_r = min(br * 4.0f0, 0.55f0)
+                top_g = min(bg * 3.5f0, 0.68f0)
+                top_b = min(bb * 3.0f0, 0.90f0)
+                bot_r = min(br * 2.0f0, 0.35f0)
+                bot_g = min(bg * 2.0f0, 0.50f0)
+                bot_b = min(bb * 2.0f0, 0.75f0)
+            else
+                top_r, top_g, top_b = br * 0.85f0, bg * 0.85f0, bb * 0.85f0
+                bot_r, bot_g, bot_b = br * 0.50f0, bg * 0.50f0, bb * 0.50f0
+            end
+            fill_v = Float32[
+                x0, y0, bot_r, bot_g, bot_b,
+                x1, y0, bot_r, bot_g, bot_b,
+                x1, y1, top_r, top_g, top_b,
+                x0, y0, bot_r, bot_g, bot_b,
+                x1, y1, top_r, top_g, top_b,
+                x0, y1, top_r, top_g, top_b,
+            ]
+            glBindBuffer(GL_ARRAY_BUFFER, eng.vbo_buttons)
+            glBufferData(GL_ARRAY_BUFFER, sizeof(fill_v), fill_v, GL_DYNAMIC_DRAW)
+            glUseProgram(eng.prog_legend)
+            glBindVertexArray(eng.vao_buttons)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glDrawArrays(GL_TRIANGLES, 0, 6)
+            glDisable(GL_BLEND)
+            glBindVertexArray(0)
+
+            # ── border outline ────────────────────────────────────────────
+            out_v = Float32[x0, y0, x1, y0, x1, y1, x0, y1]
+            glBindBuffer(GL_ARRAY_BUFFER, eng.vbo_streamlines)
+            glBufferData(GL_ARRAY_BUFFER, sizeof(out_v), out_v, GL_DYNAMIC_DRAW)
+            glUseProgram(eng.prog_streamlines)
+            if act
+                glUniform3f(eng.loc_streamline_color, 1.0f0, 1.0f0, 1.0f0)
+                glLineWidth(2.5f0)
+            else
+                glUniform3f(eng.loc_streamline_color, 0.38f0, 0.38f0, 0.44f0)
+            end
+            glBindVertexArray(eng.vao_streamlines)
+            glDrawArrays(GL_LINE_LOOP, 0, 4)
+            glLineWidth(1.0f0)
+            glBindVertexArray(0)
+
+            # ── collect centred label geometry ────────────────────────────
+            tw = text_width(label, lsc)
+            append!(lbl_verts, text_quad_vertices(label,
+                x0 + (btn_w - tw) / 2f0,
+                y0 + (btn_h - lh) / 2f0,
+                lsc))
+        end
+
+        # Single text draw for all three labels
+        update_text_buffer!(eng, lbl_verts)
+        glUseProgram(eng.prog_text)
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, eng.text_texture)
+        glBindVertexArray(eng.vao_text)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glDrawArrays(GL_TRIANGLES, 0, eng.text_vertex_count)
+        glDisable(GL_BLEND)
+        glBindVertexArray(0)
+    end
+
+
+    if isempty(view_name)
+        view_name = "Scalar"
+    end
+    GLFW.SetWindowTitle(eng.window, string("Fluid Flow — ", view_name, " [", round(vmin, digits=3), " → ", round(vmax, digits=3), "]"))
 
     if capture_path !== nothing
         capture_frame!(eng, capture_path)
     end
 
     GLFW.SwapBuffers(eng.window)
-    return true
+    return (true, clicked)
 end
 
 function capture_frame!(eng::FluidEngine, filename::AbstractString)

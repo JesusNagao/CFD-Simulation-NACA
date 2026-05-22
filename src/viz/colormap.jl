@@ -1,7 +1,7 @@
 # src/viz/colormap.jl
 module Colormap
 
-export compute_vorticity, compute_speed, compute_streamlines, compute_velocity_vectors, smooth_field, smooth_vorticity
+export compute_vorticity, compute_speed, compute_pressure, compute_streamlines, compute_velocity_vectors, smooth_field, smooth_vorticity
 
 """
     compute_vorticity(u, v, dx, dy) → Matrix{Float32}
@@ -42,6 +42,23 @@ function compute_speed(u::Matrix{Float64}, v::Matrix{Float64}, dx::Float64, dy::
     end
 
     return speed
+end
+
+"""
+    compute_pressure(p) → Matrix{Float32}
+
+Compute a cell-centered pressure field from the nodal pressure field `p`.
+"""
+function compute_pressure(p::Matrix{Float64})
+    nx = size(p, 1) - 1
+    ny = size(p, 2) - 1
+    pressure = Matrix{Float32}(undef, nx, ny)
+
+    for j in 1:ny, i in 1:nx
+        pressure[i, j] = Float32(0.25 * (p[i, j] + p[i+1, j] + p[i, j+1] + p[i+1, j+1]))
+    end
+
+    return pressure
 end
 
 """
