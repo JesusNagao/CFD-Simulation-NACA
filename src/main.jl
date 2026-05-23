@@ -26,9 +26,17 @@ _use_metal = false
 
 try
     using CUDA
-    _use_cuda = CUDA.functional()
-    _use_cuda && println("[GPU] CUDA (NVIDIA) GPU detected — running on GPU")
-catch; end
+    if CUDA.functional()
+        _use_cuda = true
+        println("[GPU] CUDA (NVIDIA) GPU detected — running on GPU")
+        println("[GPU] Device: ", CUDA.name(CUDA.device()))
+    else
+        println("[GPU] CUDA loaded but not functional — check NVIDIA driver")
+        try; CUDA.versioninfo(); catch e; println("[GPU] CUDA versioninfo error: ", e); end
+    end
+catch e
+    println("[GPU] CUDA unavailable: ", e)
+end
 
 if !_use_cuda
     try
