@@ -10,6 +10,7 @@ A real-time 2D incompressible Navier-Stokes solver for flow around a NACA 4-digi
 
 - **Fractional-step projection solver** — upwind advection, central diffusion, and a Red-Black SOR Poisson pressure solve in a single timestep loop
 - **Immersed boundary method** — NACA 4-digit airfoils at arbitrary angle of attack, analytically masked onto the Cartesian grid
+- **Live NACA parametrization** — change airfoil shape (camber, thickness, angle of attack) at runtime with keyboard keys; the profile and obstacle mask rebuild instantly and the flow resets
 - **GPU acceleration** — automatically uses CUDA (NVIDIA) or Metal (Apple Silicon) when available; falls back to CPU transparently
 - **Three scalar field views** — speed magnitude, pressure, and vorticity, each with its own colormap and colorbar
 - **Real-time CL/CD plot** — a second window shows the lift and drag coefficient history as the simulation runs
@@ -74,6 +75,8 @@ Two windows open on startup:
 
 ### Keyboard (Fluid Flow window)
 
+#### View controls
+
 | Key | Action |
 |-----|--------|
 | `1` | Speed magnitude view |
@@ -81,6 +84,19 @@ Two windows open on startup:
 | `3` | Vorticity view |
 | `Space` | Cycle through views |
 | `Esc` | Quit |
+
+#### NACA profile parametrization
+
+Each key press changes one parameter by one step, immediately rebuilds the airfoil geometry and obstacle mask, and resets the flow field.
+
+| Keys | Parameter | Step | Valid range |
+|------|-----------|------|-------------|
+| `Q` / `A` | Angle of attack `α` | ±1° | −25° … +25° |
+| `W` / `S` | Max thickness `t` | ±0.01 | 0.04 … 0.30 |
+| `E` / `D` | Max camber `m` | ±0.01 | 0.00 … 0.09 |
+| `R` / `F` | Camber position `p` | ±0.1 | 0.1 … 0.9 |
+
+The current parameter values are displayed live in the window title bar. `const ALPHA` in `main.jl` sets the initial angle of attack; `naca_alpha` is then mutable at runtime.
 
 ### Mouse
 
@@ -92,17 +108,29 @@ Click the **SPEED**, **PRESSURE**, or **VORTICITY** buttons in the top-left corn
 
 All parameters are defined at the top of [`src/main.jl`](src/main.jl).
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
+### Fixed (compile-time constants)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
 | `NX`, `NY` | 256, 256 | Grid resolution |
 | `RE` | 100 | Reynolds number |
 | `U_INF` | 1.0 | Freestream velocity |
-| `ALPHA` | 8.0° | Angle of attack |
+| `ALPHA` | 8.0° | Initial angle of attack |
 | `DX`, `DY` | 100 / (NX−1) | Grid spacing |
 | `NU` | U_INF × 100 / RE | Kinematic viscosity |
 | `DT` | 0.01 × min(DX, DY) / U_INF | Timestep (CFL-conservative) |
-| Chord | 50.0 | Airfoil chord length (grid units) |
-| NACA profile | 2412 | m=0.04, p=0.4, t=0.12 |
+
+### NACA profile (mutable at runtime)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `naca_m` | 0.04 | Max camber as fraction of chord |
+| `naca_p` | 0.4 | Chordwise position of max camber |
+| `naca_t` | 0.12 | Max thickness as fraction of chord |
+| `naca_chord` | 50.0 | Chord length (grid units) |
+| `naca_alpha` | `ALPHA` | Angle of attack in degrees |
+
+The defaults correspond to a **NACA 2412** profile at 8° angle of attack. Changing any of these variables at startup (or at runtime via the keyboard) triggers `build_naca_profile`, which recomputes both the boolean obstacle mask and the polygon vertices used for the on-screen overlay.
 
 ---
 

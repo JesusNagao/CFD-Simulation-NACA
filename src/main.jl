@@ -68,55 +68,63 @@ const DY       = 100.0 / (NY - 1)
 const NU       = U_INF * 100.0 / RE  # kinematic viscosity from Reynolds number
 const DT       = 0.01 * min(DX, DY) / U_INF  # Very conservative timestep
 
+# ── NACA 4-digit parameters — adjustable at runtime ───────────────────────────
+# naca_alpha starts from ALPHA so the simulation opens with the configured angle.
+# Key bindings:
+#   Q / A  →  angle of attack  ± 1°
+#   W / S  →  thickness        ± 0.01
+#   E / D  →  max camber       ± 0.01
+#   R / F  →  camber position  ± 0.1
+naca_m     = 0.04    # max camber as fraction of chord
+naca_p     = 0.4    # chordwise position of max camber
+naca_t     = 0.12    # max thickness as fraction of chord
+naca_chord = 50.0    # chord length in grid units
+naca_alpha = Float64(ALPHA)  # angle of attack — initialized from ALPHA, then mutable
+
+# ── Grid setup ────────────────────────────────────────────────────────────────
+x = LinRange(0, 100, NX)
+y = LinRange(0, 100, NY)
+x_grid, y_grid = generate_grid(x, y)
+
+# ── NACA profile builder ──────────────────────────────────────────────────────
+# Returns (obstacle_mask_cpu, profile_vertices) for the given NACA parameters.
+function build_naca_profile(m, p, t, chord, alpha)
+    obs = zeros(Bool, NX+1, NY+1)
+    obs[1:NX, 1:NY] .= naca_profile_mask(x_grid, y_grid;
+                                          m=m, p=p, t=t, chord=chord, alpha=alpha)
+
+    xu, yu, xl, yl = naca_coordinates(m, p, t, chord; n_points=251, alpha=alpha)
+
+    x_center = (minimum(x_grid) + maximum(x_grid)) / 2
+    y_center = (minimum(y_grid) + maximum(y_grid)) / 2
+    x_shift  = x_center - chord/2 * cosd(alpha)
+    y_shift  = y_center + chord/2 * sind(alpha)
+    xu .+= x_shift;  yu .+= y_shift
+    xl .+= x_shift;  yl .+= y_shift
+
+    verts = Float32[]
+    for i in eachindex(xu)
+        push!(verts, Float32(xu[i]), Float32(yu[i]))
+    end
+    for i in reverse(axes(xl, 1)[2:end-1])
+        push!(verts, Float32(xl[i]), Float32(yl[i]))
+    end
+
+    return obs, verts
+end
 
 # ── Initialize fields ─────────────────────────────────────────────────────────
 global u = fill(U_INF, NX+1, NY+1)
 global v = zeros(NX+1, NY+1)
 global p = zeros(NX+1, NY+1)
 
-x = LinRange(0, 100, NX)
-y = LinRange(0, 100, NY)
-
-x_grid, y_grid = generate_grid(x, y)
-
-# Build a boolean obstacle mask sized to match u, v, p (NX+1 × NY+1).
-# naca_profile_mask returns an NX×NY mask; pad with false for the extra border row/column.
-obstacle = zeros(Bool, NX+1, NY+1)
-obstacle[1:NX, 1:NY] .= naca_profile_mask(x_grid, y_grid; m=0.04, p=0.4, t=0.12, chord=50.0, alpha=ALPHA)
-
-# Keep a CPU copy of the obstacle mask for force integration (the loop-based
-# compute_forces function cannot run on a GPU array directly).
-const obstacle_h = copy(obstacle)
+obstacle_h, profile_vertices = build_naca_profile(naca_m, naca_p, naca_t, naca_chord, naca_alpha)
 
 # Move all simulation arrays to the compute device (GPU if available, CPU otherwise).
 global u        = to_device(u)
 global v        = to_device(v)
 global p        = to_device(p)
-global obstacle = to_device(obstacle)
-
-# Build a closed polygon for the airfoil surface and render it in gray.
-# naca_coordinates returns separate x arrays for upper/lower after rotation.
-profile_xu, profile_yu, profile_xl, profile_yl = naca_coordinates(0.04, 0.4, 0.12, 50.0; n_points=251, alpha=ALPHA)
-
-# Center using the same convention as naca_profile_mask:
-# chord midpoint maps to (x_center, y_center).
-x_center = (minimum(x_grid) + maximum(x_grid)) / 2
-y_center = (minimum(y_grid) + maximum(y_grid)) / 2
-cosA     = cosd(ALPHA)
-sinA     = sind(ALPHA)
-x_shift  = x_center - 50.0/2 * cosA
-y_shift  = y_center + 50.0/2 * sinA
-
-profile_xu .+= x_shift;  profile_yu .+= y_shift
-profile_xl .+= x_shift;  profile_yl .+= y_shift
-
-profile_vertices = Float32[]
-for i in eachindex(profile_xu)
-    push!(profile_vertices, Float32(profile_xu[i]), Float32(profile_yu[i]))
-end
-for i in reverse(axes(profile_xl, 1)[2:end-1])
-    push!(profile_vertices, Float32(profile_xl[i]), Float32(profile_yl[i]))
-end
+global obstacle = to_device(copy(obstacle_h))
 
 # ── Initialize engine ─────────────────────────────────────────────────────────
 record_frames = false  # set to true to save every rendered frame to frames/frame_XXXXX.ppm
@@ -134,10 +142,11 @@ const VIEW_VORTICITY = 3
 view_mode = VIEW_SPEED
 view_labels = Dict(VIEW_SPEED => "SPEED", VIEW_PRESSURE => "PRESSURE", VIEW_VORTICITY => "VORTICITY")
 
-prev_key_1 = false
-prev_key_2 = false
-prev_key_3 = false
-prev_key_space = false
+prev_key_1     = false; prev_key_2 = false; prev_key_3 = false; prev_key_space = false
+prev_key_q     = false; prev_key_a = false  # naca_alpha +/-
+prev_key_w     = false; prev_key_s = false  # naca_t +/-
+prev_key_e     = false; prev_key_d = false  # naca_m +/-
+prev_key_r     = false; prev_key_f = false  # naca_p +/-
 
 eng = VizEngine.init(NX, NY; title="Fluid Flow — Speed Magnitude", width=700, height=700,
                      speed_min=speed_min, speed_max=speed_max)
@@ -160,13 +169,25 @@ while running
     # 2. Read keyboard input for view toggles before computing the current view
     prev_view_label = view_labels[view_mode]
     GLFW.PollEvents()
-    current_key_1 = GLFW.GetKey(eng.window, GLFW.KEY_1) != GLFW.RELEASE
-    current_key_2 = GLFW.GetKey(eng.window, GLFW.KEY_2) != GLFW.RELEASE
-    current_key_3 = GLFW.GetKey(eng.window, GLFW.KEY_3) != GLFW.RELEASE
+    current_key_1     = GLFW.GetKey(eng.window, GLFW.KEY_1) != GLFW.RELEASE
+    current_key_2     = GLFW.GetKey(eng.window, GLFW.KEY_2) != GLFW.RELEASE
+    current_key_3     = GLFW.GetKey(eng.window, GLFW.KEY_3) != GLFW.RELEASE
     current_key_space = GLFW.GetKey(eng.window, GLFW.KEY_SPACE) != GLFW.RELEASE
+
+    cur_q = GLFW.GetKey(eng.window, GLFW.KEY_Q) != GLFW.RELEASE
+    cur_a = GLFW.GetKey(eng.window, GLFW.KEY_A) != GLFW.RELEASE
+    cur_w = GLFW.GetKey(eng.window, GLFW.KEY_W) != GLFW.RELEASE
+    cur_s = GLFW.GetKey(eng.window, GLFW.KEY_S) != GLFW.RELEASE
+    cur_e = GLFW.GetKey(eng.window, GLFW.KEY_E) != GLFW.RELEASE
+    cur_d = GLFW.GetKey(eng.window, GLFW.KEY_D) != GLFW.RELEASE
+    cur_r = GLFW.GetKey(eng.window, GLFW.KEY_R) != GLFW.RELEASE
+    cur_f = GLFW.GetKey(eng.window, GLFW.KEY_F) != GLFW.RELEASE
 
     global view_mode
     global prev_key_1, prev_key_2, prev_key_3, prev_key_space
+    global prev_key_q, prev_key_a, prev_key_w, prev_key_s
+    global prev_key_e, prev_key_d, prev_key_r, prev_key_f
+    global naca_m, naca_p, naca_t, naca_alpha
 
     if current_key_1 && !prev_key_1
         println("[Input] KEY_1 pressed")
@@ -187,10 +208,38 @@ while running
         println("[Input] switching view: ", prev_view_label, " -> ", view_labels[view_mode])
     end
 
-    prev_key_1 = current_key_1
-    prev_key_2 = current_key_2
-    prev_key_3 = current_key_3
-    prev_key_space = current_key_space
+    # NACA parameter changes — rising-edge detection, clamped to valid ranges.
+    # On any change: rebuild the obstacle mask, re-upload the profile geometry,
+    # and reset the flow field so the solver starts fresh for the new shape.
+    naca_changed = false
+    if cur_q && !prev_key_q; naca_alpha = clamp(naca_alpha + 1.0, -25.0, 25.0); naca_changed = true; end
+    if cur_a && !prev_key_a; naca_alpha = clamp(naca_alpha - 1.0, -25.0, 25.0); naca_changed = true; end
+    if cur_w && !prev_key_w; naca_t = clamp(round(naca_t + 0.01, digits=2), 0.04, 0.30); naca_changed = true; end
+    if cur_s && !prev_key_s; naca_t = clamp(round(naca_t - 0.01, digits=2), 0.04, 0.30); naca_changed = true; end
+    if cur_e && !prev_key_e; naca_m = clamp(round(naca_m + 0.01, digits=2), 0.00, 0.09); naca_changed = true; end
+    if cur_d && !prev_key_d; naca_m = clamp(round(naca_m - 0.01, digits=2), 0.00, 0.09); naca_changed = true; end
+    if cur_r && !prev_key_r; naca_p = clamp(round(naca_p + 0.1,  digits=1), 0.1,  0.9 ); naca_changed = true; end
+    if cur_f && !prev_key_f; naca_p = clamp(round(naca_p - 0.1,  digits=1), 0.1,  0.9 ); naca_changed = true; end
+
+    if naca_changed
+        println(@sprintf("[NACA] m=%.2f  p=%.1f  t=%.2f  α=%.1f°  →  rebuilding profile...",
+                         naca_m, naca_p, naca_t, naca_alpha))
+        obs_new, verts_new = build_naca_profile(naca_m, naca_p, naca_t, naca_chord, naca_alpha)
+        copyto!(obstacle_h, obs_new)
+        global u        = to_device(fill(U_INF, NX+1, NY+1))
+        global v        = to_device(zeros(NX+1, NY+1))
+        global p        = to_device(zeros(NX+1, NY+1))
+        global obstacle = to_device(copy(obstacle_h))
+        global t        = 0.0
+        VizEngine.upload_profile!(eng, verts_new, DX, DY)
+    end
+
+    prev_key_1 = current_key_1; prev_key_2 = current_key_2
+    prev_key_3 = current_key_3; prev_key_space = current_key_space
+    prev_key_q = cur_q; prev_key_a = cur_a
+    prev_key_w = cur_w; prev_key_s = cur_s
+    prev_key_e = cur_e; prev_key_d = cur_d
+    prev_key_r = cur_r; prev_key_f = cur_f
 
     # 3. Bring fields back to CPU for visualization (no-op when already on CPU).
     u_h = to_host(u)
@@ -221,7 +270,7 @@ while running
 
     # Compute CL and CD from surface pressure + viscous stress integration.
     Fx, Fy = Forces.compute_forces(u_h, v_h, p_h, obstacle_h, DX, DY, 1.0, NU)
-    CL, CD = Forces.compute_cl_cd(Fx, Fy, 1.0, U_INF, 50.0)
+    CL, CD = Forces.compute_cl_cd(Fx, Fy, 1.0, U_INF, naca_chord)
 
     println(@sprintf("t = %.4f  |  view = %-9s  |  range = [%+.3f, %+.3f]  |  CL = %+.4f  CD = %+.4f",
                      t, view_label, vmin, vmax, CL, CD))
@@ -247,6 +296,11 @@ while running
     if record_frames
         global frame_index += 1
     end
+
+    # 8. Update window title with current NACA parameters and key hints
+    GLFW.SetWindowTitle(eng.window, @sprintf(
+        "Fluid — %s  |  NACA m=%.2f p=%.1f t=%.2f α=%.1f°  |  Q/A:α  W/S:t  E/D:m  R/F:p",
+        view_label, naca_m, naca_p, naca_t, naca_alpha))
 
     # Render the CL/CD history plot in its own window.
     # CoeffPlot.render! switches to the coeff GL context internally, so we
