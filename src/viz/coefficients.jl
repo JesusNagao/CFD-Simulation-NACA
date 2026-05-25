@@ -47,7 +47,7 @@ void main() {
 const TEXT_FONT_WIDTH  = 5
 const TEXT_FONT_HEIGHT = 7
 const TEXT_FONT_GAP    = 1
-const TEXT_ATLAS_CHARS = "0123456789.- "
+const TEXT_ATLAS_CHARS = "0123456789.- s"
 
 const TEXT_FONT_BITMAPS = Dict(
     '0' => [" 111 ", "1   1", "1  11", "1 1 1", "11  1", "1   1", " 111 "],
@@ -63,6 +63,7 @@ const TEXT_FONT_BITMAPS = Dict(
     '.' => ["     ", "     ", "     ", "     ", "     ", "  11 ", "  11 "],
     '-' => ["     ", "     ", "     ", "11111", "     ", "     ", "     "],
     ' ' => ["     ", "     ", "     ", "     ", "     ", "     ", "     "],
+    's' => [" 111 ", "1   1", "1    ", " 111 ", "    1", "1   1", " 111 "],
 )
 
 # ─── Plot region in NDC [-1, 1]² ─────────────────────────────────────────────
@@ -194,6 +195,17 @@ function _square_verts(x0::Float32, y0::Float32, s::Float32)
     x1 = x0 + s; y1 = y0 + s
     Float32[x0, y0,  x1, y0,  x1, y1,
             x0, y0,  x1, y1,  x0, y1]
+end
+
+# Returns a "nice" grid step that produces ~5 tick intervals across [v0, v1].
+function _nice_step(v0::Float32, v1::Float32)
+    r = v1 - v0
+    r < 1f-6 && return 0.1f0
+    raw = r / 5f0
+    e   = floor(log10(Float64(raw)))
+    f   = raw / Float32(10.0^e)
+    nice = f < 1.5f0 ? 1f0 : f < 3.5f0 ? 2f0 : f < 7.5f0 ? 5f0 : 10f0
+    return nice * Float32(10.0^e)
 end
 
 # ─── Init ─────────────────────────────────────────────────────────────────────
@@ -330,8 +342,8 @@ function render!(cw::CoeffWindow, t::Real, CL::Real, CD::Real)
         v0 = lo - pad
         v1 = hi + pad
 
-        # ── Grid lines every 0.5 coefficient units ─────────────────────────
-        gs = 0.5f0
+        # ── Grid lines: adaptive step so there are always ~5 lines ───────
+        gs = _nice_step(v0, v1)
         gv = ceil(v0 / gs) * gs
         while gv <= v1
             _, gy = _ndc(t0, gv, t0, t1, v0, v1)
@@ -382,11 +394,15 @@ function render!(cw::CoeffWindow, t::Real, CL::Real, CD::Real)
         lh   = lsc * Float32(TEXT_FONT_HEIGHT)
         lbls = Float32[]
 
-        # Y-axis: one numeric label per grid line, right-aligned left of PX0
+        # Y-axis: one numeric label per grid line, right-aligned left of PX0.
+        # Decimal places derived from gs so the labels match the step magnitude.
+        dec  = max(0, -floor(Int, log10(Float64(gs) + 1e-10)))
         tick = ceil(v0 / gs) * gs
         while tick <= v1
             _, gy = _ndc(t0, tick, t0, t1, v0, v1)
-            lbl = @sprintf("%.1f", tick)
+            lbl = dec == 0 ? @sprintf("%.0f", tick) :
+                  dec == 1 ? @sprintf("%.1f", tick) :
+                             @sprintf("%.2f", tick)
             lw  = _tw(lbl, lsc)
             append!(lbls, _text_quads(lbl, PX0 - lw - 0.022f0, gy - lh * 0.5f0, lsc))
             tick += gs
@@ -397,7 +413,7 @@ function render!(cw::CoeffWindow, t::Real, CL::Real, CD::Real)
         for (i, frac) in enumerate((0.0f0, 0.5f0, 1.0f0))
             tv  = t0 + frac * (t1 - t0)
             gx, _ = _ndc(tv, v0, t0, t1, v0, v1)
-            lbl = @sprintf("%.1f", tv)
+            lbl = @sprintf("%.1f", tv) * "s"
             lw  = _tw(lbl, lsc)
             tx  = if i == 1; gx             # left-align at t0
                   elseif i == 3; gx - lw    # right-align at t1
